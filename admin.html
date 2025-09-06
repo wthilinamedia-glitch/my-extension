@@ -1,116 +1,180 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Extension Admin Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
+    :root{
+      --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#22c55e; --danger:#ef4444; --input:#1f2937;
+    }
+    *{box-sizing:border-box}
     body {
-      font-family: "Segoe UI", Arial, sans-serif;
-      background: #f5f7fa;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: linear-gradient(135deg, #0b1220, #111827);
+      color: var(--text);
+      margin: 0; min-height: 100vh;
+      display:flex; align-items:center; justify-content:center; padding:24px;
     }
     .card {
-      background: #fff;
-      border-radius: 12px;
-      padding: 25px 30px;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.1);
-      width: 350px;
+      width: 100%; max-width: 720px;
+      background: rgba(17,24,39,0.9);
+      border: 1px solid #1f2937;
+      border-radius: 16px; padding: 24px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
     }
-    h2 {
-      margin-top: 0;
-      font-size: 22px;
-      text-align: center;
-      color: #333;
-    }
-    label {
-      display: block;
-      margin: 12px 0 6px;
-      font-weight: 500;
-    }
+    h1{margin:0 0 16px; font-size: 22px;}
+    p.muted{color:var(--muted); margin-top:0}
+    .grid {display:grid; grid-template-columns: 1fr 1fr; gap: 16px;}
+    .field {display:flex; flex-direction:column; gap:6px;}
+    label{font-size:13px; color:#cbd5e1}
     input {
-      width: 100%;
-      padding: 10px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
-      font-size: 14px;
+      background: var(--input); border:1px solid #374151; color:var(--text);
+      padding:10px 12px; border-radius:10px; outline:none; font-size:14px;
     }
+    input::placeholder{color:#9ca3af}
     button {
-      margin-top: 20px;
-      width: 100%;
-      padding: 12px;
-      border: none;
-      border-radius: 6px;
-      font-size: 16px;
-      font-weight: bold;
-      color: #fff;
-      background: #4a90e2;
-      cursor: pointer;
-      transition: background 0.3s;
+      border:0; background:var(--accent); color:#052e13;
+      padding:12px 14px; font-weight:700; border-radius:10px; cursor:pointer;
+      transition:transform .05s ease, filter .2s ease;
     }
-    button:hover {
-      background: #357ABD;
-    }
-    #result {
-      margin-top: 15px;
-      text-align: center;
-      font-size: 14px;
-      font-weight: 500;
-    }
-    .success { color: green; }
-    .error { color: red; }
+    button:hover{ filter:brightness(1.05) }
+    button:active{ transform: translateY(1px) }
+    .danger{ background: var(--danger); color:#fff; }
+    .row{ display:flex; gap:12px; align-items:end; }
+    .row > * { flex:1 }
+    .status{ margin-top:14px; font-size:14px; }
+    .ok{ color:#86efac } .err{ color:#fca5a5 }
+    .section{ border-top:1px solid #1f2937; margin-top:18px; padding-top:18px;}
+    .kbd{background:#0b1220;border:1px solid #1f2937;border-bottom-color:#0b1220;padding:2px 6px;border-radius:6px;color:#cbd5e1;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;font-size:12px}
   </style>
 </head>
 <body>
   <div class="card">
-    <h2>Extension Admin Panel</h2>
-    
-    <label>Admin Password</label>
-    <input type="password" id="adminpass" placeholder="Enter admin password">
+    <h1>Extension Admin</h1>
+    <p class="muted">Create users and renew weekly access. Keep your <span class="kbd">ADMIN_KEY</span> secret.</p>
 
-    <label>New Username</label>
-    <input type="text" id="username" placeholder="e.g. user123">
+    <div class="grid">
+      <div class="section">
+        <h3>Create User (valid until next Thu 23:59 SLT)</h3>
+        <div class="field">
+          <label>Admin Key</label>
+          <input type="password" id="adminKey_register" placeholder="Enter ADMIN_KEY from server env">
+        </div>
+        <div class="field">
+          <label>Username</label>
+          <input id="username_register" placeholder="e.g. user123">
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input id="password_register" type="password" placeholder="••••••••">
+        </div>
+        <button onclick="registerUser()">Create User</button>
+        <div id="status_register" class="status"></div>
+      </div>
 
-    <label>New Password</label>
-    <input type="password" id="password" placeholder="••••••••">
+      <div class="section">
+        <h3>Renew User (extend to next Thu 23:59 SLT)</h3>
+        <div class="field">
+          <label>Admin Key</label>
+          <input type="password" id="adminKey_renew" placeholder="Enter ADMIN_KEY from server env">
+        </div>
+        <div class="field">
+          <label>Username</label>
+          <input id="username_renew" placeholder="Existing username">
+        </div>
+        <button class="danger" onclick="renewUser()">Renew Subscription</button>
+        <div id="status_renew" class="status"></div>
+      </div>
+    </div>
 
-    <button onclick="registerUser()">Create User</button>
-
-    <div id="result"></div>
+    <div class="section">
+      <h3>Check User</h3>
+      <div class="row">
+        <div class="field">
+          <label>Admin Key</label>
+          <input type="password" id="adminKey_check" placeholder="Enter ADMIN_KEY from server env">
+        </div>
+        <div class="field">
+          <label>Username</label>
+          <input id="username_check" placeholder="Existing username">
+        </div>
+        <button onclick="checkUser()">Check</button>
+      </div>
+      <div id="status_check" class="status"></div>
+    </div>
   </div>
 
   <script>
-    const API_BASE_URL = ""; // same server
-    const ADMIN_PASSWORD = "superAdminSecret"; // change this!
-
     async function registerUser() {
-      const adminpass = document.getElementById("adminpass").value;
-      const username = document.getElementById("username").value;
-      const password = document.getElementById("password").value;
-      const resultEl = document.getElementById("result");
+      const adminKey = document.getElementById("adminKey_register").value.trim();
+      const username = document.getElementById("username_register").value.trim();
+      const password = document.getElementById("password_register").value;
+      const out = document.getElementById("status_register");
+      out.textContent = "Working...";
 
-      if (adminpass !== ADMIN_PASSWORD) {
-        resultEl.textContent = "❌ Wrong admin password!";
-        resultEl.className = "error";
-        return;
+      try {
+        const res = await fetch("/api/admin/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-admin-key": adminKey },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (data.success) {
+          out.innerHTML = `<span class="ok">✅ User created.</span> Expires: ${data.subscription_until}`;
+        } else {
+          out.innerHTML = `<span class="err">❌ ${data.message || "Failed"}</span>`;
+        }
+      } catch (e) {
+        out.innerHTML = `<span class="err">❌ Network error</span>`;
       }
+    }
 
-      const res = await fetch("/api/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password })
-      });
-      const data = await res.json();
+    async function renewUser() {
+      const adminKey = document.getElementById("adminKey_renew").value.trim();
+      const username = document.getElementById("username_renew").value.trim();
+      const out = document.getElementById("status_renew");
+      out.textContent = "Working...";
 
-      if (data.success) {
-        resultEl.textContent = "✅ User registered: " + username;
-        resultEl.className = "success";
-      } else {
-        resultEl.textContent = "❌ " + data.message;
-        resultEl.className = "error";
+      try {
+        const res = await fetch("/api/admin/renew", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-admin-key": adminKey },
+          body: JSON.stringify({ username })
+        });
+        const data = await res.json();
+        if (data.success) {
+          out.innerHTML = `<span class="ok">✅ Renewed.</span> New expiry: ${data.subscription_until}`;
+        } else {
+          out.innerHTML = `<span class="err">❌ ${data.message || "Failed"}</span>`;
+        }
+      } catch (e) {
+        out.innerHTML = `<span class="err">❌ Network error</span>`;
+      }
+    }
+
+    async function checkUser() {
+      const adminKey = document.getElementById("adminKey_check").value.trim();
+      const username = document.getElementById("username_check").value.trim();
+      const out = document.getElementById("status_check");
+      out.textContent = "Working...";
+
+      try {
+        const res = await fetch("/api/admin/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-admin-key": adminKey },
+          body: JSON.stringify({ username })
+        });
+        const data = await res.json();
+        if (data.success) {
+          const u = data.user;
+          out.innerHTML = `<span class="ok">✅ Found.</span> Active: ${u.subscription_active}, Until: ${u.subscription_until || "N/A"}`;
+        } else {
+          out.innerHTML = `<span class="err">❌ ${data.message || "Not found"}</span>`;
+        }
+      } catch (e) {
+        out.innerHTML = `<span class="err">❌ Network error</span>`;
       }
     }
   </script>
