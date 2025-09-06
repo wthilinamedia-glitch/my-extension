@@ -11,7 +11,8 @@ app.use(express.json());
 
 // --- CONFIG ---
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || "superSecretKey"; // set in hosting env vars
+const JWT_SECRET = process.env.JWT_SECRET || "superSecretKey"; // set in 
+hosting env vars
 
 // --- DATABASE SETUP ---
 const db = new sqlite3.Database("./users.db");
@@ -56,17 +57,20 @@ function makeToken(username) {
 app.post("/api/register", (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
-    return res.json({ success: false, message: "Missing username or password" });
+    return res.json({ success: false, message: "Missing username or 
+password" });
   }
 
   const hashed = bcrypt.hashSync(password, 10);
 
   db.run(
-    "INSERT INTO users (username, password, subscription_active) VALUES (?, ?, ?)",
+    "INSERT INTO users (username, password, subscription_active) VALUES 
+(?, ?, ?)",
     [username, hashed, 1],
     (err) => {
       if (err) {
-        return res.json({ success: false, message: "User already exists" });
+        return res.json({ success: false, message: "User already exists" 
+});
       }
       res.json({ success: true, message: "User registered" });
     }
@@ -77,15 +81,19 @@ app.post("/api/register", (req, res) => {
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
 
-  db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
+  db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) 
+=> {
     if (err) return res.json({ success: false, message: "DB error" });
-    if (!user) return res.json({ success: false, message: "User not found" });
+    if (!user) return res.json({ success: false, message: "User not found" 
+});
 
     const validPass = bcrypt.compareSync(password, user.password);
-    if (!validPass) return res.json({ success: false, message: "Wrong password" });
+    if (!validPass) return res.json({ success: false, message: "Wrong 
+password" });
 
     if (!user.subscription_active) {
-      return res.json({ success: false, message: "Subscription inactive" });
+      return res.json({ success: false, message: "Subscription inactive" 
+});
     }
 
     const token = makeToken(user.username);
@@ -113,3 +121,4 @@ app.get("/api/health", (req, res) => {
 
 // --- START SERVER ---
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+
