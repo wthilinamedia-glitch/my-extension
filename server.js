@@ -6,6 +6,13 @@ const sqlite3 = require("sqlite3").verbose();
 const { DateTime } = require("luxon");
 
 const app = express();
+const path = require("path");
+
+// Serve admin.html at /admin
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "admin.html"));
+});
+
 app.use(cors());
 app.use(express.json());
 
