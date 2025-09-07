@@ -1,11 +1,10 @@
-
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const sqlite3 = require("sqlite3").verbose();
 const { DateTime } = require("luxon");
 const path = require("path");
+const { Pool } = require("pg");
 
 const app = express();
 app.use(cors());
@@ -14,31 +13,34 @@ app.use(express.json());
 // --- CONFIG ---
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "superSecretKeyChangeMe";
-const ADMIN_KEY = process.env.ADMIN_KEY || "change-this-admin-key"; // used to protect admin endpoints
+const ADMIN_KEY = process.env.ADMIN_KEY || "change-this-admin-key";
 
-// --- DATABASE SETUP ---
-const db = new sqlite3.Database("./users.db");
-
-// Create table if not exists
-db.run(`CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT UNIQUE,
-  password TEXT,
-  subscription_active INTEGER DEFAULT 1,
-  subscription_until TEXT
-)`);
-
-// Ensure subscription_until column exists (migration-safe)
-db.run(`ALTER TABLE users ADD COLUMN subscription_until TEXT`, (err) => {
-  // ignore error if column already exists
+// --- POSTGRES SETUP ---
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
 });
+
+// Create users table if not exists
+(async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      username TEXT UNIQUE,
+      password TEXT NOT NULL,
+      subscription_active BOOLEAN DEFAULT true,
+      subscription_until TIMESTAMP
+    )
+  `);
+  console.log("✅ Users table ready");
+})();
 
 // --- TIME HELPERS ---
 function nextThursdayCutoffISO() {
   const now = DateTime.now().setZone("Asia/Colombo");
   let cutoff = now.set({ weekday: 4, hour: 23, minute: 59, second: 0, millisecond: 0 });
   if (cutoff <= now) cutoff = cutoff.plus({ weeks: 1 });
-  return cutoff.toUTC().toISO(); // ISO string in UTC
+  return cutoff.toUTC().toISO();
 }
 
 function nextThursdayExpSeconds() {
@@ -61,12 +63,13 @@ function requireAdminKey(req, res, next) {
 }
 
 // --- AUTH ---
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.json({ success: false, message: "Missing credentials" });
 
-  db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
-    if (err) return res.json({ success: false, message: "DB error" });
+  try {
+    const { rows } = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
+    const user = rows[0];
     if (!user) return res.json({ success: false, message: "User not found" });
 
     const ok = bcrypt.compareSync(password, user.password);
@@ -76,21 +79,22 @@ app.post("/api/login", (req, res) => {
       return res.json({ success: false, message: "Subscription inactive" });
     }
 
-    // Weekly subscription rule: must be before subscription_until
     if (user.subscription_until) {
       const now = DateTime.now().toUTC();
-      const until = DateTime.fromISO(user.subscription_until, { zone: "utc" });
+      const until = DateTime.fromJSDate(user.subscription_until);
       if (now > until) {
         return res.json({ success: false, message: "Subscription expired. Please renew." });
       }
     } else {
-      // If missing, treat as expired and require renewal
       return res.json({ success: false, message: "Subscription expired. Please renew." });
     }
 
     const token = makeToken(user.username);
     res.json({ success: true, token });
-  });
+  } catch (err) {
+    console.error(err);
+    res.json({ success: false, message: "DB error" });
+  }
 });
 
 app.post("/api/verify", (req, res) => {
@@ -104,8 +108,8 @@ app.post("/api/verify", (req, res) => {
   }
 });
 
-// --- ADMIN: REGISTER (creates user, sets subscription until next Thursday 23:59 SLT) ---
-app.post("/api/admin/register", requireAdminKey, (req, res) => {
+// --- ADMIN: REGISTER ---
+app.post("/api/admin/register", requireAdminKey, async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.json({ success: false, message: "Missing username or password" });
@@ -113,42 +117,58 @@ app.post("/api/admin/register", requireAdminKey, (req, res) => {
   const hashed = bcrypt.hashSync(password, 10);
   const untilISO = nextThursdayCutoffISO();
 
-  db.run(
-    "INSERT INTO users (username, password, subscription_active, subscription_until) VALUES (?, ?, ?, ?)",
-    [username, hashed, 1, untilISO],
-    (err) => {
-      if (err) return res.json({ success: false, message: "User already exists" });
-      res.json({ success: true, message: "User registered", subscription_until: untilISO });
+  try {
+    await pool.query(
+      "INSERT INTO users (username, password, subscription_active, subscription_until) VALUES ($1, $2, $3, $4)",
+      [username, hashed, true, untilISO]
+    );
+    res.json({ success: true, message: "User registered", subscription_until: untilISO });
+  } catch (err) {
+    if (err.code === "23505") {
+      res.json({ success: false, message: "User already exists" });
+    } else {
+      console.error(err);
+      res.json({ success: false, message: "DB error" });
     }
-  );
+  }
 });
 
-// --- ADMIN: RENEW (extends existing user to next Thursday 23:59 SLT) ---
-app.post("/api/admin/renew", requireAdminKey, (req, res) => {
+// --- ADMIN: RENEW ---
+app.post("/api/admin/renew", requireAdminKey, async (req, res) => {
   const { username } = req.body;
   if (!username) return res.json({ success: false, message: "Missing username" });
 
   const untilISO = nextThursdayCutoffISO();
-  db.run(
-    "UPDATE users SET subscription_active = 1, subscription_until = ? WHERE username = ?",
-    [untilISO, username],
-    function (err) {
-      if (err) return res.json({ success: false, message: "DB error" });
-      if (this.changes === 0) return res.json({ success: false, message: "User not found" });
-      res.json({ success: true, message: "Subscription renewed", subscription_until: untilISO });
+  try {
+    const result = await pool.query(
+      "UPDATE users SET subscription_active = true, subscription_until = $1 WHERE username = $2",
+      [untilISO, username]
+    );
+    if (result.rowCount === 0) {
+      return res.json({ success: false, message: "User not found" });
     }
-  );
+    res.json({ success: true, message: "Subscription renewed", subscription_until: untilISO });
+  } catch (err) {
+    console.error(err);
+    res.json({ success: false, message: "DB error" });
+  }
 });
 
-// --- (Optional) ADMIN: CHECK USER ---
-app.post("/api/admin/check", requireAdminKey, (req, res) => {
+// --- ADMIN: CHECK ---
+app.post("/api/admin/check", requireAdminKey, async (req, res) => {
   const { username } = req.body;
   if (!username) return res.json({ success: false, message: "Missing username" });
-  db.get("SELECT username, subscription_active, subscription_until FROM users WHERE username = ?", [username], (err, user) => {
-    if (err) return res.json({ success: false, message: "DB error" });
-    if (!user) return res.json({ success: false, message: "User not found" });
-    res.json({ success: true, user });
-  });
+  try {
+    const { rows } = await pool.query(
+      "SELECT username, subscription_active, subscription_until FROM users WHERE username = $1",
+      [username]
+    );
+    if (rows.length === 0) return res.json({ success: false, message: "User not found" });
+    res.json({ success: true, user: rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.json({ success: false, message: "DB error" });
+  }
 });
 
 // --- HEALTH ---
