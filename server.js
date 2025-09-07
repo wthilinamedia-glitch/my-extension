@@ -1,3 +1,4 @@
+
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
@@ -12,8 +13,9 @@ app.use(express.json());
 
 // --- CONFIG ---
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || "superSecretKeyChangeMe";
-const ADMIN_KEY = process.env.ADMIN_KEY || "change-this-admin-key";
+const JWT_SECRET = process.env.JWT_SECRET || "superSecretKey12345.";
+const ADMIN_KEY = process.env.ADMIN_KEY || "Sahara89."; // <-- fallback; set ADMIN_KEY in Render env
+const MAX_DEVICES = parseInt(process.env.MAX_DEVICES || "4", 10);
 
 // --- POSTGRES SETUP ---
 const pool = new Pool({
@@ -21,7 +23,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Create users table if not exists
+// Initialize tables
 (async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -32,8 +34,21 @@ const pool = new Pool({
       subscription_until TIMESTAMP
     )
   `);
-  console.log("✅ Users table ready");
-})();
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_devices (
+      id SERIAL PRIMARY KEY,
+      username TEXT,
+      device_id TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  console.log("✅ Users and user_devices tables ready");
+})().catch(err => {
+  console.error("DB init error:", err);
+  process.exit(1);
+});
 
 // --- TIME HELPERS ---
 function nextThursdayCutoffISO() {
@@ -64,8 +79,10 @@ function requireAdminKey(req, res, next) {
 
 // --- AUTH ---
 app.post("/api/login", async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.json({ success: false, message: "Missing credentials" });
+  const { username, password, deviceId } = req.body;
+  if (!username || !password || !deviceId) {
+    return res.json({ success: false, message: "Missing credentials or deviceId" });
+  }
 
   try {
     const { rows } = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
@@ -89,6 +106,23 @@ app.post("/api/login", async (req, res) => {
       return res.json({ success: false, message: "Subscription expired. Please renew." });
     }
 
+    // --- Device check & register if new ---
+    const { rows: deviceRows } = await pool.query(
+      "SELECT device_id FROM user_devices WHERE username = $1",
+      [username]
+    );
+    const knownDevices = deviceRows.map(r => r.device_id);
+
+    if (!knownDevices.includes(deviceId)) {
+      if (knownDevices.length >= MAX_DEVICES) {
+        return res.json({ success: false, message: `Too many devices registered. Limit is ${MAX_DEVICES}.` });
+      }
+      await pool.query(
+        "INSERT INTO user_devices (username, device_id) VALUES ($1, $2)",
+        [username, deviceId]
+      );
+    }
+
     const token = makeToken(user.username);
     res.json({ success: true, token });
   } catch (err) {
@@ -108,7 +142,7 @@ app.post("/api/verify", (req, res) => {
   }
 });
 
-// --- ADMIN: REGISTER ---
+// --- ADMIN: REGISTER (sets subscription until next Thu 23:59 SLT) ---
 app.post("/api/admin/register", requireAdminKey, async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -165,6 +199,40 @@ app.post("/api/admin/check", requireAdminKey, async (req, res) => {
     );
     if (rows.length === 0) return res.json({ success: false, message: "User not found" });
     res.json({ success: true, user: rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.json({ success: false, message: "DB error" });
+  }
+});
+
+// --- ADMIN: LIST DEVICES ---
+app.post("/api/admin/devices", requireAdminKey, async (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.json({ success: false, message: "Missing username" });
+
+  try {
+    const { rows } = await pool.query(
+      "SELECT id, device_id, created_at FROM user_devices WHERE username = $1 ORDER BY created_at ASC",
+      [username]
+    );
+    res.json({ success: true, devices: rows });
+  } catch (err) {
+    console.error(err);
+    res.json({ success: false, message: "DB error" });
+  }
+});
+
+// --- ADMIN: RESET DEVICES ---
+app.post("/api/admin/reset-devices", requireAdminKey, async (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.json({ success: false, message: "Missing username" });
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM user_devices WHERE username = $1",
+      [username]
+    );
+    res.json({ success: true, message: `Removed ${result.rowCount} devices for ${username}` });
   } catch (err) {
     console.error(err);
     res.json({ success: false, message: "DB error" });

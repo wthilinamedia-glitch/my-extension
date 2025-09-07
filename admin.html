@@ -18,7 +18,7 @@
       display:flex; align-items:center; justify-content:center; padding:24px;
     }
     .card {
-      width: 100%; max-width: 720px;
+      width: 100%; max-width: 820px;
       background: rgba(17,24,39,0.9);
       border: 1px solid #1f2937;
       border-radius: 16px; padding: 24px;
@@ -53,7 +53,7 @@
 <body>
   <div class="card">
     <h1>Extension Admin</h1>
-    <p class="muted">Create users and renew weekly access. Keep your <span class="kbd">ADMIN_KEY</span> secret.</p>
+    <p class="muted">Weekly access (expires Thu 23:59 SLT), max 4 devices / user. Use the <span class="kbd">ADMIN_KEY</span> you set on the server.</p>
 
     <div class="grid">
       <div class="section">
@@ -103,6 +103,25 @@
         <button onclick="checkUser()">Check</button>
       </div>
       <div id="status_check" class="status"></div>
+    </div>
+
+    <div class="section">
+      <h3>Manage Devices</h3>
+      <div class="row">
+        <div class="field">
+          <label>Admin Key</label>
+          <input type="password" id="adminKey_devices" placeholder="Enter ADMIN_KEY from server env">
+        </div>
+        <div class="field">
+          <label>Username</label>
+          <input id="username_devices" placeholder="Existing username">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button onclick="listDevices()">List Devices</button>
+        <button class="danger" onclick="resetDevices()">Reset Devices</button>
+      </div>
+      <div id="status_devices" class="status"></div>
     </div>
   </div>
 
@@ -172,6 +191,57 @@
           out.innerHTML = `<span class="ok">✅ Found.</span> Active: ${u.subscription_active}, Until: ${u.subscription_until || "N/A"}`;
         } else {
           out.innerHTML = `<span class="err">❌ ${data.message || "Not found"}</span>`;
+        }
+      } catch (e) {
+        out.innerHTML = `<span class="err">❌ Network error</span>`;
+      }
+    }
+
+    async function listDevices() {
+      const adminKey = document.getElementById("adminKey_devices").value.trim();
+      const username = document.getElementById("username_devices").value.trim();
+      const out = document.getElementById("status_devices");
+      out.textContent = "Working...";
+
+      try {
+        const res = await fetch("/api/admin/devices", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-admin-key": adminKey },
+          body: JSON.stringify({ username })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (!data.devices || data.devices.length === 0) {
+            out.innerHTML = `<span class="err">❌ No devices found.</span>`;
+          } else {
+            out.innerHTML = `<span class="ok">✅ Devices:</span><br>` +
+              data.devices.map(d => `ID: ${d.id}, Device: ${d.device_id}, Created: ${d.created_at}`).join("<br>");
+          }
+        } else {
+          out.innerHTML = `<span class="err">❌ ${data.message || "Failed"}</span>`;
+        }
+      } catch (e) {
+        out.innerHTML = `<span class="err">❌ Network error</span>`;
+      }
+    }
+
+    async function resetDevices() {
+      const adminKey = document.getElementById("adminKey_devices").value.trim();
+      const username = document.getElementById("username_devices").value.trim();
+      const out = document.getElementById("status_devices");
+      out.textContent = "Working...";
+
+      try {
+        const res = await fetch("/api/admin/reset-devices", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-admin-key": adminKey },
+          body: JSON.stringify({ username })
+        });
+        const data = await res.json();
+        if (data.success) {
+          out.innerHTML = `<span class="ok">✅ ${data.message}</span>`;
+        } else {
+          out.innerHTML = `<span class="err">❌ ${data.message || "Failed"}</span>`;
         }
       } catch (e) {
         out.innerHTML = `<span class="err">❌ Network error</span>`;
