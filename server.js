@@ -13,9 +13,9 @@ app.use(express.json());
 
 // --- CONFIG ---
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || "superSecretKey12345.";
-const ADMIN_KEY = process.env.ADMIN_KEY || "Sahara89."; // <-- fallback; set ADMIN_KEY in Render env
-const MAX_DEVICES = parseInt(process.env.MAX_DEVICES || "4", 10);
+const JWT_SECRET = process.env.JWT_SECRET || "superSecretKeyChangeMe";
+const ADMIN_KEY = process.env.ADMIN_KEY || "Sahara89."; // set on Render for security
+const MAX_DEVICES = 4;
 
 // --- POSTGRES SETUP ---
 const pool = new Pool({
@@ -25,30 +25,30 @@ const pool = new Pool({
 
 // Initialize tables
 (async () => {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username TEXT UNIQUE,
-      password TEXT NOT NULL,
-      subscription_active BOOLEAN DEFAULT true,
-      subscription_until TIMESTAMP
-    )
-  `);
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE,
+        password TEXT NOT NULL,
+        subscription_active BOOLEAN DEFAULT true,
+        subscription_until TIMESTAMP
+      )
+    `);
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS user_devices (
-      id SERIAL PRIMARY KEY,
-      username TEXT,
-      device_id TEXT,
-      created_at TIMESTAMP DEFAULT NOW()
-    )
-  `);
-
-  console.log("✅ Users and user_devices tables ready");
-})().catch(err => {
-  console.error("DB init error:", err);
-  process.exit(1);
-});
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_devices (
+        id SERIAL PRIMARY KEY,
+        username TEXT,
+        device_id TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log("✅ Users and user_devices tables ready");
+  } catch (e) {
+    console.error("DB init error:", e);
+  }
+})();
 
 // --- TIME HELPERS ---
 function nextThursdayCutoffISO() {
@@ -96,9 +96,12 @@ app.post("/api/login", async (req, res) => {
       return res.json({ success: false, message: "Subscription inactive" });
     }
 
+    // subscription_until may come as string or Date; handle both
     if (user.subscription_until) {
+      const until = (typeof user.subscription_until === "string")
+        ? DateTime.fromISO(user.subscription_until, { zone: "utc" })
+        : DateTime.fromJSDate(user.subscription_until).toUTC();
       const now = DateTime.now().toUTC();
-      const until = DateTime.fromJSDate(user.subscription_until);
       if (now > until) {
         return res.json({ success: false, message: "Subscription expired. Please renew." });
       }
@@ -106,7 +109,7 @@ app.post("/api/login", async (req, res) => {
       return res.json({ success: false, message: "Subscription expired. Please renew." });
     }
 
-    // --- Device check & register if new ---
+    // --- Device check ---
     const { rows: deviceRows } = await pool.query(
       "SELECT device_id FROM user_devices WHERE username = $1",
       [username]
@@ -142,7 +145,7 @@ app.post("/api/verify", (req, res) => {
   }
 });
 
-// --- ADMIN: REGISTER (sets subscription until next Thu 23:59 SLT) ---
+// --- ADMIN: REGISTER ---
 app.post("/api/admin/register", requireAdminKey, async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
